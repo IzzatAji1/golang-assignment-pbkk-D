@@ -2,35 +2,40 @@ package main
 
 import (
 	"fmt"
+	"log"
 	"sync"
 	"time"
+
+	"gorm.io/driver/mysql"
+	"gorm.io/gorm"
 )
 
 const conferenceTickets int = 50
 
 var conferenceName = "Go Conference"
 var remainingTickets uint = 50
-var bookings = make([]UserData, 0)
-
-type UserData struct {
-	firstName       string
-	lastName        string
-	email           string
-	numberOfTickets uint
-}
-
+var db *gorm.DB
 var wg = sync.WaitGroup{}
 
-func main() {
+type UserData struct {
+	gorm.Model
+	FirstName       string
+	LastName        string
+	Email           string
+	NumberOfTickets uint
+}
 
+func main() {
+	// Set up the database
+	setupDatabase()
+
+	// Greet users
 	greetUsers()
 
-	// for {
 	firstName, lastName, email, userTickets := getUserInput()
 	isValidName, isValidEmail, isValidTicketNumber := validateUserInput(firstName, lastName, email, userTickets)
 
 	if isValidName && isValidEmail && isValidTicketNumber {
-
 		bookTicket(userTickets, firstName, lastName, email)
 
 		wg.Add(1)
@@ -40,23 +45,34 @@ func main() {
 		fmt.Printf("The first names of bookings are: %v\n", firstNames)
 
 		if remainingTickets == 0 {
-			// end program
 			fmt.Println("Our conference is booked out. Come back next year.")
-			// break
 		}
 	} else {
 		if !isValidName {
-			fmt.Println("first name or last name you entered is too short")
+			fmt.Println("First name or last name you entered is too short.")
 		}
 		if !isValidEmail {
-			fmt.Println("email address you entered doesn't contain @ sign")
+			fmt.Println("Email address you entered doesn't contain @ sign.")
 		}
 		if !isValidTicketNumber {
-			fmt.Println("number of tickets you entered is invalid")
+			fmt.Println("Number of tickets you entered is invalid.")
 		}
 	}
-	//}
+
 	wg.Wait()
+}
+
+func setupDatabase() {
+	var err error
+	dsn := "user:password@tcp(127.0.0.1:3306)/conference?charset=utf8mb4&parseTime=True&loc=Local"
+	db, err = gorm.Open(mysql.Open(dsn), &gorm.Config{})
+	if err != nil {
+		log.Fatalf("Error connecting to the database: %v", err)
+	}
+
+	// Migrate the schema
+	db.AutoMigrate(&UserData{})
+	fmt.Println("Database connected and schema migrated.")
 }
 
 func greetUsers() {
@@ -66,9 +82,12 @@ func greetUsers() {
 }
 
 func getFirstNames() []string {
+	var users []UserData
+	db.Select("FirstName").Find(&users)
+
 	firstNames := []string{}
-	for _, booking := range bookings {
-		firstNames = append(firstNames, booking.firstName)
+	for _, user := range users {
+		firstNames = append(firstNames, user.FirstName)
 	}
 	return firstNames
 }
@@ -94,26 +113,37 @@ func getUserInput() (string, string, string, uint) {
 	return firstName, lastName, email, userTickets
 }
 
-func bookTicket(userTickets uint, firstName string, lastName string, email string) {
-	remainingTickets = remainingTickets - userTickets
+func validateUserInput(firstName, lastName, email string, userTickets uint) (bool, bool, bool) {
+	isValidName := len(firstName) > 2 && len(lastName) > 2
+	isValidEmail := len(email) > 5 && contains(email, "@")
+	isValidTicketNumber := userTickets > 0 && userTickets <= remainingTickets
 
-	var userData = UserData{
-		firstName:       firstName,
-		lastName:        lastName,
-		email:           email,
-		numberOfTickets: userTickets,
+	return isValidName, isValidEmail, isValidTicketNumber
+}
+
+func contains(str, substr string) bool {
+	return len(str) >= len(substr) && len(substr) > 0 && len(str) > 0 && len(str) >= len(substr)
+}
+
+func bookTicket(userTickets uint, firstName, lastName, email string) {
+	remainingTickets -= userTickets
+
+	user := UserData{
+		FirstName:       firstName,
+		LastName:        lastName,
+		Email:           email,
+		NumberOfTickets: userTickets,
 	}
 
-	bookings = append(bookings, userData)
-	fmt.Printf("List of bookings is %v\n", bookings)
+	db.Create(&user) // Save to the database
 
 	fmt.Printf("Thank you %v %v for booking %v tickets. You will receive a confirmation email at %v\n", firstName, lastName, userTickets, email)
 	fmt.Printf("%v tickets remaining for %v\n", remainingTickets, conferenceName)
 }
 
-func sendTicket(userTickets uint, firstName string, lastName string, email string) {
+func sendTicket(userTickets uint, firstName, lastName, email string) {
 	time.Sleep(50 * time.Second)
-	var ticket = fmt.Sprintf("%v tickets for %v %v", userTickets, firstName, lastName)
+	ticket := fmt.Sprintf("%v tickets for %v %v", userTickets, firstName, lastName)
 	fmt.Println("#################")
 	fmt.Printf("Sending ticket:\n %v \nto email address %v\n", ticket, email)
 	fmt.Println("#################")
